@@ -38,6 +38,10 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+const (
+	remoteOperationTimeout = 30 * time.Second
+)
+
 var logger Logger
 
 // SetLogger - this is legacy to provide backwards compatibility with logrus.
@@ -290,15 +294,24 @@ func (g *Group) Set(ctx context.Context, key string, value []byte, expire time.T
 			if err := g.setFromPeer(ctx, owner, key, value, expire); err != nil {
 				return nil, err
 			}
+
 			// TODO(thrawn01): Not sure if this is useful outside of tests...
 			//  maybe we should ALWAYS update the local cache?
 			if hotCache {
 				g.localSet(key, value, expire, &g.hotCache)
 			}
+			err := g.removeFromPeers(ctx, key, owner)
+			if err != nil {
+				return nil, err
+			}
 			return nil, nil
 		}
 		// We own this key
 		g.localSet(key, value, expire, &g.mainCache)
+		err := g.removeFromPeers(ctx, key, nil)
+		if err != nil {
+			return nil, err
+		}
 		return nil, nil
 	})
 	return err
@@ -310,46 +323,56 @@ func (g *Group) Remove(ctx context.Context, key string) error {
 	g.peersOnce.Do(g.initPeers)
 
 	_, err := g.removeGroup.Do(key, func() (interface{}, error) {
+		var err error
 
-		// Remove from key owner first
+		// First attempt to remove the key from the peer that owns it.
 		owner, ok := g.peers.PickPeer(key)
 		if ok {
-			if err := g.removeFromPeer(ctx, owner, key); err != nil {
-				return nil, err
+			if ownerRemoveErr := g.removeFromPeer(ctx, owner, key); ownerRemoveErr != nil {
+				err = ownerRemoveErr
 			}
 		}
 		// Remove from our cache next
 		g.localRemove(key)
-		wg := sync.WaitGroup{}
-		errs := make(chan error)
 
 		// Asynchronously clear the key from all hot and main caches of peers
-		for _, peer := range g.peers.GetAll() {
-			// avoid deleting from owner a second time
-			if peer == owner {
-				continue
-			}
-
-			wg.Add(1)
-			go func(peer ProtoGetter) {
-				errs <- g.removeFromPeer(ctx, peer, key)
-				wg.Done()
-			}(peer)
-		}
-		go func() {
-			wg.Wait()
-			close(errs)
-		}()
-
-		// TODO(thrawn01): Should we report all errors? Reporting context
-		//  cancelled error for each peer doesn't make much sense.
-		var err error
-		for e := range errs {
-			err = e
+		peersRemoveErr := g.removeFromPeers(ctx, key, owner)
+		if peersRemoveErr != nil {
+			err = errors.Join(err, peersRemoveErr)
 		}
 
 		return nil, err
 	})
+	return err
+}
+
+// removeFromNoneOwners removes the key from all peers that do not own it.
+// This is used when a key is removed from the owner peer to ensure that stale values are not returned from other peers.
+// It returns an error if any of the remove operations fail, but will attempt to remove the key from all peers regardless of individual errors.
+func (g *Group) removeFromPeers(ctx context.Context, key string, owner ProtoGetter) error {
+	errs := make(chan error)
+	wg := sync.WaitGroup{}
+
+	for _, peer := range g.peers.GetAll() {
+		if peer == owner {
+			continue
+		}
+
+		wg.Add(1)
+		go func(peer ProtoGetter) {
+			errs <- g.removeFromPeer(ctx, peer, key)
+			wg.Done()
+		}(peer)
+	}
+	go func() {
+		wg.Wait()
+		close(errs)
+	}()
+
+	var err error
+	for e := range errs {
+		err = errors.Join(err, e)
+	}
 	return err
 }
 
@@ -486,6 +509,9 @@ func (g *Group) getFromPeer(ctx context.Context, peer ProtoGetter, key string) (
 }
 
 func (g *Group) setFromPeer(ctx context.Context, peer ProtoGetter, k string, v []byte, e time.Time) error {
+	ctx, cancel := context.WithTimeout(ctx, remoteOperationTimeout)
+	defer cancel()
+
 	var expire int64
 	if !e.IsZero() {
 		expire = e.UnixNano()
@@ -500,6 +526,8 @@ func (g *Group) setFromPeer(ctx context.Context, peer ProtoGetter, k string, v [
 }
 
 func (g *Group) removeFromPeer(ctx context.Context, peer ProtoGetter, key string) error {
+	ctx, cancel := context.WithTimeout(ctx, remoteOperationTimeout)
+	defer cancel()
 	req := &pb.GetRequest{
 		Group: &g.name,
 		Key:   &key,
