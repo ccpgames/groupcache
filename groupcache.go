@@ -40,7 +40,7 @@ import (
 
 const (
 	remoteOperationTimeout = 30 * time.Second
-	notOwnedKeyTTL         = time.Second
+	notOwnedKeyTTL         = 10 * time.Second
 	hotCacheMaxTTL         = time.Minute
 )
 
@@ -389,7 +389,7 @@ func (g *Group) Remove(ctx context.Context, key string) error {
 	return err
 }
 
-// removeFromNoneOwners removes the key from all peers that do not own it.
+// removeFromPeers removes the key from all peers that do not own it.
 // This is used when a key is removed from the owner peer to ensure that stale values are not returned from other peers.
 // It returns an error if any of the remove operations fail, but will attempt to remove the key from all peers regardless of individual errors.
 func (g *Group) removeFromPeers(ctx context.Context, key string, owner ProtoGetter) error {
