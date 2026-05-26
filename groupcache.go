@@ -40,6 +40,8 @@ import (
 
 const (
 	remoteOperationTimeout = 30 * time.Second
+	notOwnedKeyTTL         = time.Second
+	hotCacheMaxTTL         = time.Minute
 )
 
 var logger Logger
@@ -133,13 +135,14 @@ func newGroup(name string, cacheBytes int64, getter Getter, peers PeerPicker) *G
 		panic("duplicate registration of group " + name)
 	}
 	g := &Group{
-		name:        name,
-		getter:      getter,
-		peers:       peers,
-		cacheBytes:  cacheBytes,
-		loadGroup:   &singleflight.Group{},
-		setGroup:    &singleflight.Group{},
-		removeGroup: &singleflight.Group{},
+		name:           name,
+		getter:         getter,
+		peers:          peers,
+		cacheBytes:     cacheBytes,
+		loadGroup:      &singleflight.Group{},
+		localLoadGroup: &singleflight.Group{},
+		setGroup:       &singleflight.Group{},
+		removeGroup:    &singleflight.Group{},
 	}
 	if fn := newGroupHook; fn != nil {
 		fn(g)
@@ -201,9 +204,13 @@ type Group struct {
 	hotCache cache
 
 	// loadGroup ensures that each key is only fetched once
-	// (either locally or remotely), regardless of the number of
-	// concurrent callers.
+	// (either locally or remotely) when requested from local get
+	// regardless of the number of concurrent callers.
 	loadGroup flightGroup
+
+	// localLoadGroup ensures that each key is only being fetched once
+	// locally regardless of the number of concurrent callers.
+	localLoadGroup flightGroup
 
 	// setGroup ensures that each added key is only added
 	// remotely once regardless of the number of concurrent callers.
@@ -236,7 +243,9 @@ type Stats struct {
 	PeerErrors               AtomicInt
 	Loads                    AtomicInt // (gets - cacheHits)
 	LoadsDeduped             AtomicInt // after singleflight
-	LocalLoads               AtomicInt // total good local loads
+	LocalLoads               AtomicInt // local loads
+	LocalLoadsDeduped        AtomicInt // after singleflight for local loads
+	SuccessfulLocalLoads     AtomicInt // total good local loads
 	LocalLoadErrs            AtomicInt // total bad local loads
 	ServerRequests           AtomicInt // gets that came over the network from peers
 }
@@ -258,8 +267,8 @@ func (g *Group) Get(ctx context.Context, key string, dest Sink) error {
 	if dest == nil {
 		return errors.New("groupcache: nil dest Sink")
 	}
-	value, cacheHit := g.lookupCache(key)
 
+	value, cacheHit := g.lookupCaches(key)
 	if cacheHit {
 		g.Stats.CacheHits.Add(1)
 		return setSinkView(dest, value)
@@ -271,6 +280,38 @@ func (g *Group) Get(ctx context.Context, key string, dest Sink) error {
 	// case will likely be one caller.
 	destPopulated := false
 	value, destPopulated, err := g.load(ctx, key, dest)
+	if err != nil {
+		return err
+	}
+	if destPopulated {
+		return nil
+	}
+	err = setSinkView(dest, value)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (g *Group) getForRemote(ctx context.Context, key string, dest Sink) error {
+	g.peersOnce.Do(g.initPeers)
+	g.Stats.Gets.Add(1)
+	if dest == nil {
+		return errors.New("groupcache: nil dest Sink")
+	}
+
+	value, cacheHit := g.lookupCaches(key)
+	if cacheHit {
+		g.Stats.CacheHits.Add(1)
+		return setSinkView(dest, value)
+	}
+
+	// Optimization to avoid double unmarshalling or copying: keep
+	// track of whether the dest was already populated. One caller
+	// (if local) will set this; the losers will not. The common
+	// case will likely be one caller.
+	destPopulated := false
+	value, destPopulated, err := g.loadLocally(ctx, key, dest)
 	if err != nil {
 		return err
 	}
@@ -298,7 +339,7 @@ func (g *Group) Set(ctx context.Context, key string, value []byte, expire time.T
 			// TODO(thrawn01): Not sure if this is useful outside of tests...
 			//  maybe we should ALWAYS update the local cache?
 			if hotCache {
-				g.localSet(key, value, expire, &g.hotCache)
+				g.localHotCacheSet(key, value, expire)
 			}
 			err := g.removeFromPeers(ctx, key, owner)
 			if err != nil {
@@ -306,8 +347,10 @@ func (g *Group) Set(ctx context.Context, key string, value []byte, expire time.T
 			}
 			return nil, nil
 		}
-		// We own this key
-		g.localSet(key, value, expire, &g.mainCache)
+		// We own this key so we populate the main cache
+		g.localMainCacheSet(key, value, expire)
+		// and we always populate the hot cache to maximize chances of early cache hits
+		g.localHotCacheSet(key, value, expire)
 		err := g.removeFromPeers(ctx, key, nil)
 		if err != nil {
 			return nil, err
@@ -380,36 +423,17 @@ func (g *Group) removeFromPeers(ctx context.Context, key string, owner ProtoGett
 func (g *Group) load(ctx context.Context, key string, dest Sink) (value ByteView, destPopulated bool, err error) {
 	g.Stats.Loads.Add(1)
 	viewi, err := g.loadGroup.Do(key, func() (interface{}, error) {
-		// Check the cache again because singleflight can only dedup calls
-		// that overlap concurrently.  It's possible for 2 concurrent
-		// requests to miss the cache, resulting in 2 load() calls.  An
-		// unfortunate goroutine scheduling would result in this callback
-		// being run twice, serially.  If we don't check the cache again,
-		// cache.nbytes would be incremented below even though there will
-		// be only one entry for this key.
-		//
-		// Consider the following serialized event ordering for two
-		// goroutines in which this callback gets called twice for hte
-		// same key:
-		// 1: Get("key")
-		// 2: Get("key")
-		// 1: lookupCache("key")
-		// 2: lookupCache("key")
-		// 1: load("key")
-		// 2: load("key")
-		// 1: loadGroup.Do("key", fn)
-		// 1: fn()
-		// 2: loadGroup.Do("key", fn)
-		// 2: fn()
-		if value, cacheHit := g.lookupCache(key); cacheHit {
-			g.Stats.CacheHits.Add(1)
-			return value, nil
-		}
 		g.Stats.LoadsDeduped.Add(1)
 		var value ByteView
 		var err error
 		if peer, ok := g.peers.PickPeer(key); ok {
-
+			// we do not own the key
+			// let's check the hot cache again because it might got populated before we entered
+			// singleflight
+			if value, cacheHit := g.lookupHotCache(key); cacheHit {
+				g.Stats.CacheHits.Add(1)
+				return value, nil
+			}
 			// metrics duration start
 			start := time.Now()
 
@@ -425,6 +449,8 @@ func (g *Group) load(ctx context.Context, key string, dest Sink) (value ByteView
 			}
 
 			if err == nil {
+				// populate hot cache with the value retrieved from peer
+				g.populateHotCache(key, value)
 				g.Stats.PeerLoads.Add(1)
 				return value, nil
 			}
@@ -452,20 +478,71 @@ func (g *Group) load(ctx context.Context, key string, dest Sink) (value ByteView
 
 			g.Stats.PeerErrors.Add(1)
 			if ctx != nil && ctx.Err() != nil {
-				// Return here without attempting to get locally
-				// since the context is no longer valid
-				return nil, err
+				// if the context has expired, we return the context error instead of the peer error to avoid retrying on peer errors
+				// when the context has already expired
+				return nil, ctx.Err()
 			}
 		}
 
+		value, destPopulated, err = g.loadLocally(ctx, key, dest)
+		if err != nil {
+			return nil, err
+		}
+		return value, nil
+	})
+	if err == nil {
+		value = viewi.(ByteView)
+	}
+	return
+}
+
+// load loads key either by invoking the getter locally or by sending it to another machine.
+func (g *Group) loadLocally(ctx context.Context, key string, dest Sink) (value ByteView, destPopulated bool, err error) {
+	g.Stats.LocalLoads.Add(1)
+	// Load locally:
+	// - checks if the key is owned by this peer
+	// - if owned, checks the main cache for the key
+	// - if not owned or not found in the main cache, calls the getter locally
+	// - if owned, populates the main cache with the value returned by the getter
+	viewi, err := g.localLoadGroup.Do(key, func() (interface{}, error) {
+		g.Stats.LocalLoadsDeduped.Add(1)
+		_, notOwned := g.peers.PickPeer(key)
+
+		if !notOwned { // == owned
+			// since we own the key, let's lookup the main cache before calling the getter locally
+			if value, cacheHit := g.lookupMainCache(key); cacheHit {
+				g.Stats.CacheHits.Add(1)
+				// this is cached locally at the peer that owns the key, let's populate the hot cache
+				g.populateHotCache(key, value)
+				return value, nil
+			}
+		}
+
+		// we either do not own the key actually or we own the key but it is not in the main cache,
+		// so we call the getter locally
 		value, err = g.getLocally(ctx, key, dest)
 		if err != nil {
 			g.Stats.LocalLoadErrs.Add(1)
 			return nil, err
 		}
-		g.Stats.LocalLoads.Add(1)
+		g.Stats.SuccessfulLocalLoads.Add(1)
 		destPopulated = true // only one caller of load gets this return value
-		g.populateCache(key, value, &g.mainCache)
+
+		if notOwned {
+			// For non-owned keys, we set the expire time to now + notOwnedKeyTTL to prevent
+			// values served by the peers that do not own the key from being cached for long.
+			// That is unless the key has expiry time that is sooner than now + notOwnedKeyTTL,
+			//  in which case we keep the expiry time returned by the getter to avoid caching stale values in the hot cache.
+			notOwnedMaxExpiryTime := time.Now().Add(notOwnedKeyTTL)
+			if value.e.IsZero() || value.e.After(notOwnedMaxExpiryTime) {
+				value.e = notOwnedMaxExpiryTime
+			}
+		} else {
+			// in this case we own the key, so let's populate the main cache
+			g.populateMainCache(key, value)
+		}
+		// always populate the hot cache
+		g.populateHotCache(key, value)
 		return value, nil
 	})
 	if err == nil {
@@ -483,6 +560,8 @@ func (g *Group) getLocally(ctx context.Context, key string, dest Sink) (ByteView
 }
 
 func (g *Group) getFromPeer(ctx context.Context, peer ProtoGetter, key string) (ByteView, error) {
+	ctx, cancel := context.WithTimeout(ctx, remoteOperationTimeout)
+	defer cancel()
 	req := &pb.GetRequest{
 		Group: &g.name,
 		Key:   &key,
@@ -503,8 +582,6 @@ func (g *Group) getFromPeer(ctx context.Context, peer ProtoGetter, key string) (
 
 	value := ByteView{b: res.Value, e: expire}
 
-	// Always populate the hot cache
-	g.populateCache(key, value, &g.hotCache)
 	return value, nil
 }
 
@@ -535,19 +612,39 @@ func (g *Group) removeFromPeer(ctx context.Context, peer ProtoGetter, key string
 	return peer.Remove(ctx, req)
 }
 
-func (g *Group) lookupCache(key string) (value ByteView, ok bool) {
+func (g *Group) lookupCaches(key string) (value ByteView, cacheHit bool) {
+	//  first check hot cache, it's short-lived and if we have it, we can respond quickly
+	value, cacheHit = g.lookupHotCache(key)
+	if cacheHit {
+		return value, true
+	}
+
+	// check if we own the key
+	_, notOwned := g.peers.PickPeer(key)
+	// if we do own the key, check the main cache
+	if !notOwned { // == owned
+		return g.lookupMainCache(key)
+	}
+	return value, false
+}
+
+func (g *Group) lookupMainCache(key string) (value ByteView, ok bool) {
+	return g.lookupCache(key, &g.mainCache)
+}
+
+func (g *Group) lookupHotCache(key string) (value ByteView, ok bool) {
+	return g.lookupCache(key, &g.hotCache)
+}
+
+func (g *Group) lookupCache(key string, c *cache) (value ByteView, ok bool) {
 	if g.cacheBytes <= 0 {
 		return
 	}
-	value, ok = g.mainCache.get(key)
-	if ok {
-		return
-	}
-	value, ok = g.hotCache.get(key)
+	value, ok = c.get(key)
 	return
 }
 
-func (g *Group) localSet(key string, value []byte, expire time.Time, cache *cache) {
+func (g *Group) localMainCacheSet(key string, value []byte, expire time.Time) {
 	if g.cacheBytes <= 0 {
 		return
 	}
@@ -557,9 +654,33 @@ func (g *Group) localSet(key string, value []byte, expire time.Time, cache *cach
 		e: expire,
 	}
 
-	// Ensure no requests are in flight
+	// Ensure no loads in flight.
+	// Main cache can only be populated by local loads, so we only need to acquire the local load lock to ensure no loads are in flight.
+	g.localLoadGroup.Lock(func() {
+		_, notOwned := g.peers.PickPeer(key)
+		if notOwned {
+			return
+		}
+		g.populateMainCache(key, bv)
+	})
+}
+
+func (g *Group) localHotCacheSet(key string, value []byte, expire time.Time) {
+	if g.cacheBytes <= 0 {
+		return
+	}
+
+	bv := ByteView{
+		b: value,
+		e: expire,
+	}
+
+	// Ensure no loads in flight.
+	// Hot cache can be populated by both local local and remote loads, so we need to acquire both locks to ensure no loads are in flight.
 	g.loadGroup.Lock(func() {
-		g.populateCache(key, bv, cache)
+		g.localLoadGroup.Lock(func() {
+			g.populateHotCache(key, bv)
+		})
 	})
 }
 
@@ -571,18 +692,37 @@ func (g *Group) localRemove(key string) {
 
 	// Ensure no requests are in flight
 	g.loadGroup.Lock(func() {
-		g.hotCache.remove(key)
-		g.mainCache.remove(key)
+		g.localLoadGroup.Lock(func() {
+			g.hotCache.remove(key)
+			g.mainCache.remove(key)
+		})
 	})
 }
 
-func (g *Group) populateCache(key string, value ByteView, cache *cache) {
+func (g *Group) populateHotCache(key string, value ByteView) {
 	if g.cacheBytes <= 0 {
 		return
 	}
-	cache.add(key, value)
+	defer g.evictFromCacheIfNeeded()
+	hotCacheMaxExpiryTime := time.Now().Add(hotCacheMaxTTL)
+	if value.e.IsZero() || value.e.After(hotCacheMaxExpiryTime) {
+		// if the value has no expirty or it's later than now + hotCacheMaxTTL,
+		// we set the expiry to now + hotCacheMaxTTL to prevent values from being cached in the hot cache
+		// for too long
+		value.e = hotCacheMaxExpiryTime
+	}
+	g.hotCache.add(key, value)
+}
 
-	// Evict items from cache(s) if necessary.
+func (g *Group) populateMainCache(key string, value ByteView) {
+	if g.cacheBytes <= 0 {
+		return
+	}
+	defer g.evictFromCacheIfNeeded()
+	g.mainCache.add(key, value)
+}
+
+func (g *Group) evictFromCacheIfNeeded() {
 	for {
 		mainBytes := g.mainCache.bytes()
 		hotBytes := g.hotCache.bytes()
