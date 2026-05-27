@@ -2,7 +2,7 @@
 package promexporter
 
 import (
-	"github.com/mailgun/groupcache/v2"
+	"github.com/ccpgames/groupcache/v2"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -19,6 +19,8 @@ type Exporter struct {
 	groupLoads                    *prometheus.Desc
 	groupLoadsDeduped             *prometheus.Desc
 	groupLocalLoads               *prometheus.Desc
+	groupLocalLoadsDeduped        *prometheus.Desc
+	groupSuccessfulLocalLoads     *prometheus.Desc
 	groupLocalLoadErrs            *prometheus.Desc
 	groupServerRequests           *prometheus.Desc
 	cacheBytes                    *prometheus.Desc
@@ -60,6 +62,12 @@ type GroupStatistics interface {
 
 	// LocalLoads represents total good local loads
 	LocalLoads() int64
+
+	// LocalLoadsDeduped represents total good local loads after singleflight
+	LocalLoadsDeduped() int64
+
+	// SuccessfulLocalLoads represents total good local loads after singleflight and excluding errors
+	SuccessfulLocalLoads() int64
 
 	// LocalLoadErrs represents total bad local loads
 	LocalLoadErrs() int64
@@ -163,6 +171,18 @@ func NewExporter(opts ...Option) *Exporter {
 		[]string{"group"},
 		e.labels,
 	)
+	e.groupLocalLoadsDeduped = prometheus.NewDesc(
+		prometheus.BuildFQName(e.namespace, subsystem, "local_loads_deduped_total"),
+		"Count of loads from local cache after singleflight",
+		[]string{"group"},
+		e.labels,
+	)
+	e.groupSuccessfulLocalLoads = prometheus.NewDesc(
+		prometheus.BuildFQName(e.namespace, subsystem, "successful_local_loads_total"),
+		"Count of successful loads from local cache after singleflight and excluding errors",
+		[]string{"group"},
+		e.labels,
+	)
 	e.groupLocalLoadErrs = prometheus.NewDesc(
 		prometheus.BuildFQName(e.namespace, subsystem, "local_load_errs_total"),
 		"Count of load errors from local cache",
@@ -233,7 +253,8 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	ch <- e.groupLoads
 	ch <- e.groupLoadsDeduped
 	ch <- e.groupLocalLoads
-	ch <- e.groupLocalLoadErrs
+	ch <- e.groupLocalLoadsDeduped
+	ch <- e.groupSuccessfulLocalLoads
 	ch <- e.groupServerRequests
 	ch <- e.cacheBytes
 	ch <- e.cacheItems
@@ -264,6 +285,8 @@ func (e *Exporter) collectStats(ch chan<- prometheus.Metric, stats GroupStatisti
 	ch <- prometheus.MustNewConstMetric(e.groupLoads, prometheus.CounterValue, float64(stats.Loads()), stats.Name())
 	ch <- prometheus.MustNewConstMetric(e.groupLoadsDeduped, prometheus.CounterValue, float64(stats.LoadsDeduped()), stats.Name())
 	ch <- prometheus.MustNewConstMetric(e.groupLocalLoads, prometheus.CounterValue, float64(stats.LocalLoads()), stats.Name())
+	ch <- prometheus.MustNewConstMetric(e.groupLocalLoadsDeduped, prometheus.CounterValue, float64(stats.LocalLoadsDeduped()), stats.Name())
+	ch <- prometheus.MustNewConstMetric(e.groupSuccessfulLocalLoads, prometheus.CounterValue, float64(stats.SuccessfulLocalLoads()), stats.Name())
 	ch <- prometheus.MustNewConstMetric(e.groupLocalLoadErrs, prometheus.CounterValue, float64(stats.LocalLoadErrs()), stats.Name())
 	ch <- prometheus.MustNewConstMetric(e.groupServerRequests, prometheus.CounterValue, float64(stats.ServerRequests()), stats.Name())
 }

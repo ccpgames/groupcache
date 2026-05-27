@@ -1,7 +1,7 @@
 package promexporter
 
 import (
-	"github.com/mailgun/groupcache/v2"
+	"github.com/ccpgames/groupcache/v2"
 )
 
 // Group implements interface GroupStatistics to extract metrics from groupcache group.
@@ -58,9 +58,19 @@ func (g *statsAdapter) LoadsDeduped() int64 {
 	return g.group.Stats.LoadsDeduped.Get()
 }
 
-// LocalLoads represents total good local loads
+// LocalLoads represents total local loads
 func (g *statsAdapter) LocalLoads() int64 {
 	return g.group.Stats.LocalLoads.Get()
+}
+
+// LocalLoadsDeduped represents total good local loads after singleflight
+func (g *statsAdapter) LocalLoadsDeduped() int64 {
+	return g.group.Stats.LocalLoadsDeduped.Get()
+}
+
+// SuccessfulLocalLoads represents total good local loads after singleflight and excluding errors
+func (g *statsAdapter) SuccessfulLocalLoads() int64 {
+	return g.group.Stats.SuccessfulLocalLoads.Get()
 }
 
 // LocalLoadErrs represents total bad local loads

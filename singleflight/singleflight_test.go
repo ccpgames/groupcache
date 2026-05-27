@@ -17,6 +17,7 @@ limitations under the License.
 package singleflight
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -28,7 +29,7 @@ import (
 
 func TestDo(t *testing.T) {
 	var g Group
-	v, err := g.Do("key", func() (interface{}, error) {
+	v, err := g.Do(context.Background(), "key", func() (interface{}, error) {
 		return "bar", nil
 	})
 	if got, want := fmt.Sprintf("%v (%T)", v, v), "bar (string)"; got != want {
@@ -42,7 +43,7 @@ func TestDo(t *testing.T) {
 func TestDoErr(t *testing.T) {
 	var g Group
 	someErr := errors.New("Some error")
-	v, err := g.Do("key", func() (interface{}, error) {
+	v, err := g.Do(context.Background(), "key", func() (interface{}, error) {
 		return nil, someErr
 	})
 	if err != someErr {
@@ -67,7 +68,7 @@ func TestDoDupSuppress(t *testing.T) {
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func() {
-			v, err := g.Do("key", fn)
+			v, err := g.Do(context.Background(), "key", fn)
 			if err != nil {
 				t.Errorf("Do error: %v", err)
 			}
@@ -93,7 +94,7 @@ func TestDoPanic(t *testing.T) {
 			// do not let the panic below leak to the test
 			_ = recover()
 		}()
-		_, err = g.Do("key", func() (interface{}, error) {
+		_, err = g.Do(context.Background(), "key", func() (interface{}, error) {
 			panic("something went horribly wrong")
 		})
 	}()
@@ -101,7 +102,7 @@ func TestDoPanic(t *testing.T) {
 		t.Errorf("Do error = %v; want someErr", err)
 	}
 	// ensure subsequent calls to same key still work
-	v, err := g.Do("key", func() (interface{}, error) {
+	v, err := g.Do(context.Background(), "key", func() (interface{}, error) {
 		return "foo", nil
 	})
 	if err != nil {
@@ -133,7 +134,7 @@ func TestDoConcurrentPanic(t *testing.T) {
 				wg.Done()
 			}()
 
-			v, err := g.Do("key", fn)
+			v, err := g.Do(context.Background(), "key", fn)
 			if err == nil || !strings.Contains(err.Error(), "singleflight leader panicked") {
 				t.Errorf("Do error: %v; wanted 'singleflight panicked'", err)
 			}

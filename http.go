@@ -29,9 +29,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ccpgames/groupcache/v2/consistenthash"
+	pb "github.com/ccpgames/groupcache/v2/groupcachepb"
 	"github.com/golang/protobuf/proto"
-	"github.com/mailgun/groupcache/v2/consistenthash"
-	pb "github.com/mailgun/groupcache/v2/groupcachepb"
 )
 
 const defaultBasePath = "/_groupcache/"
@@ -46,7 +46,7 @@ type HTTPPool struct {
 	// opts specifies the options.
 	opts HTTPPoolOptions
 
-	mu          sync.Mutex // guards peers and httpGetters
+	mu          sync.RWMutex // guards peers and httpGetters
 	peers       *consistenthash.Map
 	httpGetters map[string]*httpGetter // keyed by e.g. "http://10.0.0.2:8008"
 }
@@ -135,8 +135,8 @@ func (p *HTTPPool) Set(peers ...string) {
 
 // GetAll returns all the peers in the pool
 func (p *HTTPPool) GetAll() []ProtoGetter {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 
 	var i int
 	res := make([]ProtoGetter, len(p.httpGetters))
@@ -148,8 +148,8 @@ func (p *HTTPPool) GetAll() []ProtoGetter {
 }
 
 func (p *HTTPPool) PickPeer(key string) (ProtoGetter, bool) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	if p.peers.IsEmpty() {
 		return nil, false
 	}
@@ -217,14 +217,15 @@ func (p *HTTPPool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			expire = time.Unix(*out.Expire/int64(time.Second), *out.Expire%int64(time.Second))
 		}
 
-		group.localSet(*out.Key, out.Value, expire, &group.mainCache)
+		group.localMainCacheSet(*out.Key, out.Value, expire)
 		return
 	}
 
 	var b []byte
 
 	value := AllocatingByteSliceSink(&b)
-	err := group.Get(ctx, key, value)
+
+	err := group.getForRemote(ctx, key, value)
 	if err != nil {
 		if errors.Is(err, &ErrNotFound{}) {
 			http.Error(w, err.Error(), http.StatusNotFound)

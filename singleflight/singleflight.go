@@ -19,8 +19,18 @@ limitations under the License.
 package singleflight
 
 import (
+	"context"
 	"fmt"
 	"sync"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+)
+
+const (
+	otelAttributeSingleflightRoleKey           = attribute.Key("app.groupcache.singleflight.role")
+	otelAttributeSingleflightRoleLeaderValue   = "leader"
+	otelAttributeSingleflightRoleFollowerValue = "follower"
 )
 
 // call is an in-flight or completed Do call
@@ -41,16 +51,18 @@ type Group struct {
 // sure that only one execution is in-flight for a given key at a
 // time. If a duplicate comes in, the duplicate caller waits for the
 // original to complete and receives the same results.
-func (g *Group) Do(key string, fn func() (interface{}, error)) (interface{}, error) {
+func (g *Group) Do(ctx context.Context, key string, fn func() (interface{}, error)) (interface{}, error) {
 	g.mu.Lock()
 	if g.m == nil {
 		g.m = make(map[string]*call)
 	}
 	if c, ok := g.m[key]; ok {
 		g.mu.Unlock()
+		trace.SpanFromContext(ctx).SetAttributes(otelAttributeSingleflightRoleKey.String(otelAttributeSingleflightRoleFollowerValue))
 		c.wg.Wait()
 		return c.val, c.err
 	}
+	trace.SpanFromContext(ctx).SetAttributes(otelAttributeSingleflightRoleKey.String(otelAttributeSingleflightRoleLeaderValue))
 	c := &call{
 		err: fmt.Errorf("singleflight leader panicked"),
 	}
