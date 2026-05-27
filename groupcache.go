@@ -40,8 +40,6 @@ import (
 
 const (
 	remoteOperationTimeout = 30 * time.Second
-	notOwnedKeyTTL         = 10 * time.Second
-	hotCacheMaxTTL         = time.Minute
 )
 
 var logger Logger
@@ -112,8 +110,8 @@ func GetGroups() []*Group {
 // completes.
 //
 // The group name must be unique for each getter.
-func NewGroup(name string, cacheBytes int64, getter Getter) *Group {
-	return newGroup(name, cacheBytes, getter, nil)
+func NewGroup(name string, cacheBytes int64, getter Getter, opts ...GroupOption) *Group {
+	return newGroup(name, cacheBytes, getter, nil, opts...)
 }
 
 // DeregisterGroup removes group from group pool
@@ -123,8 +121,33 @@ func DeregisterGroup(name string) {
 	mu.Unlock()
 }
 
+// groupOpts are options that can be set when creating a new group.
+type groupOpts struct {
+	clampNotOwnedKeyTTL *time.Duration
+	clampHotCacheMaxTTL *time.Duration
+}
+
+// GroupOption is a function that sets an option when creating a new group.
+type GroupOption func(*groupOpts)
+
+// WithClampNotOwnedKeyTTL sets the TTL for keys that are not owned by the peer.
+// This is used to prevent values served by the peers that do not own the key from being cached for long.
+func WithClampNotOwnedKeyTTL(d time.Duration) GroupOption {
+	return func(opts *groupOpts) {
+		opts.clampNotOwnedKeyTTL = &d
+	}
+}
+
+// WithClampHotCacheMaxTTL sets the max TTL for keys in the hot cache.
+// This is used to prevent values in the hot cache from being cached for too long causing staleness on certain pods.
+func WithClampHotCacheMaxTTL(d time.Duration) GroupOption {
+	return func(opts *groupOpts) {
+		opts.clampHotCacheMaxTTL = &d
+	}
+}
+
 // If peers is nil, the peerPicker is called via a sync.Once to initialize it.
-func newGroup(name string, cacheBytes int64, getter Getter, peers PeerPicker) *Group {
+func newGroup(name string, cacheBytes int64, getter Getter, peers PeerPicker, opts ...GroupOption) *Group {
 	if getter == nil {
 		panic("nil Getter")
 	}
@@ -224,6 +247,8 @@ type Group struct {
 
 	// Stats are statistics on the group.
 	Stats Stats
+
+	opts groupOpts
 }
 
 // flightGroup is defined as an interface which flightgroup.Group
@@ -528,12 +553,12 @@ func (g *Group) loadLocally(ctx context.Context, key string, dest Sink) (value B
 		g.Stats.SuccessfulLocalLoads.Add(1)
 		destPopulated = true // only one caller of load gets this return value
 
-		if notOwned {
-			// For non-owned keys, we set the expire time to now + notOwnedKeyTTL to prevent
+		if g.opts.clampNotOwnedKeyTTL != nil && notOwned {
+			// If clampNotOwnedKeyTTL options is set then for non-owned keys, we set the expire time to now + notOwnedKeyTTL to prevent
 			// values served by the peers that do not own the key from being cached for long.
 			// That is unless the key has expiry time that is sooner than now + notOwnedKeyTTL,
-			//  in which case we keep the expiry time returned by the getter to avoid caching stale values in the hot cache.
-			notOwnedMaxExpiryTime := time.Now().Add(notOwnedKeyTTL)
+			// in which case we keep the expiry time returned by the getter to avoid caching stale values in the hot cache.
+			notOwnedMaxExpiryTime := time.Now().Add(*g.opts.clampNotOwnedKeyTTL)
 			if value.e.IsZero() || value.e.After(notOwnedMaxExpiryTime) {
 				value.e = notOwnedMaxExpiryTime
 			}
@@ -704,12 +729,14 @@ func (g *Group) populateHotCache(key string, value ByteView) {
 		return
 	}
 	defer g.evictFromCacheIfNeeded()
-	hotCacheMaxExpiryTime := time.Now().Add(hotCacheMaxTTL)
-	if value.e.IsZero() || value.e.After(hotCacheMaxExpiryTime) {
-		// if the value has no expirty or it's later than now + hotCacheMaxTTL,
-		// we set the expiry to now + hotCacheMaxTTL to prevent values from being cached in the hot cache
-		// for too long
-		value.e = hotCacheMaxExpiryTime
+
+	if g.opts.clampHotCacheMaxTTL != nil {
+		// if the clampHotCacheMaxTTL option is set, we set the expire time for the hot cache entry to be no later than now + clampHotCacheMaxTTL to prevent values
+		// from being cached in the hot cache for too long which can cause staleness on certain pods.
+		hotCacheMaxExpiryTime := time.Now().Add(*g.opts.clampHotCacheMaxTTL)
+		if value.e.IsZero() || value.e.After(hotCacheMaxExpiryTime) {
+			value.e = hotCacheMaxExpiryTime
+		}
 	}
 	g.hotCache.add(key, value)
 }
