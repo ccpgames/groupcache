@@ -421,12 +421,12 @@ type orderedFlightGroup struct {
 	orig   flightGroup
 }
 
-func (g *orderedFlightGroup) Do(key string, fn func() (interface{}, error)) (interface{}, error) {
+func (g *orderedFlightGroup) Do(ctx context.Context, key string, fn func() (interface{}, error)) (interface{}, error) {
 	<-g.stage1
 	<-g.stage2
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.orig.Do(key, fn)
+	return g.orig.Do(ctx, key, fn)
 }
 
 func (g *orderedFlightGroup) Lock(fn func()) {

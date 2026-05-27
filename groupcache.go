@@ -151,6 +151,12 @@ func newGroup(name string, cacheBytes int64, getter Getter, peers PeerPicker, op
 	if getter == nil {
 		panic("nil Getter")
 	}
+
+	optsStruct := groupOpts{}
+	for _, opt := range opts {
+		opt(&optsStruct)
+	}
+
 	mu.Lock()
 	defer mu.Unlock()
 	initPeerServerOnce.Do(callInitPeerServer)
@@ -166,6 +172,7 @@ func newGroup(name string, cacheBytes int64, getter Getter, peers PeerPicker, op
 		localLoadGroup: &singleflight.Group{},
 		setGroup:       &singleflight.Group{},
 		removeGroup:    &singleflight.Group{},
+		opts:           optsStruct,
 	}
 	if fn := newGroupHook; fn != nil {
 		fn(g)
@@ -255,7 +262,7 @@ type Group struct {
 // satisfies.  We define this so that we may test with an alternate
 // implementation.
 type flightGroup interface {
-	Do(key string, fn func() (interface{}, error)) (interface{}, error)
+	Do(ctx context.Context, key string, fn func() (interface{}, error)) (interface{}, error)
 	Lock(fn func())
 }
 
@@ -300,7 +307,7 @@ func (g *Group) Set(ctx context.Context, key string, value []byte, expire time.T
 		return errors.New("empty Set() key not allowed")
 	}
 
-	_, err := g.setGroup.Do(key, func() (interface{}, error) {
+	_, err := g.setGroup.Do(ctx, key, func() (interface{}, error) {
 		// If remote peer owns this key
 		owner, ok := g.peers.PickPeer(key)
 		if ok {
@@ -341,7 +348,7 @@ func (g *Group) Set(ctx context.Context, key string, value []byte, expire time.T
 func (g *Group) Remove(ctx context.Context, key string) error {
 	g.peersOnce.Do(g.initPeers)
 
-	_, err := g.removeGroup.Do(key, func() (interface{}, error) {
+	_, err := g.removeGroup.Do(ctx, key, func() (interface{}, error) {
 		var ownerRemoveErr error
 
 		// let's check who own the key
@@ -430,7 +437,7 @@ func (g *Group) removeFromPeers(ctx context.Context, key string, owner ProtoGett
 // load loads key either by invoking the getter locally or by sending it to another machine.
 func (g *Group) load(ctx context.Context, key string, dest Sink) (value ByteView, destPopulated bool, err error) {
 	g.Stats.Loads.Add(1)
-	viewi, err := g.loadGroup.Do(key, func() (interface{}, error) {
+	viewi, err := g.loadGroup.Do(ctx, key, func() (interface{}, error) {
 		g.Stats.LoadsDeduped.Add(1)
 		var value ByteView
 		var err error
@@ -512,7 +519,7 @@ func (g *Group) loadLocally(ctx context.Context, key string, dest Sink) (value B
 	// - if owned, checks the main cache for the key
 	// - if not owned or not found in the main cache, calls the getter locally
 	// - if owned, populates the main cache with the value returned by the getter
-	viewi, err := g.localLoadGroup.Do(key, func() (interface{}, error) {
+	viewi, err := g.localLoadGroup.Do(ctx, key, func() (interface{}, error) {
 		g.Stats.LocalLoadsDeduped.Add(1)
 		_, notOwned := g.peers.PickPeer(key)
 
