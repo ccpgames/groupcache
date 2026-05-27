@@ -2,7 +2,7 @@
 package promexporter
 
 import (
-	"github.com/mailgun/groupcache/v2"
+	"github.com/ccpgames/groupcache/v2"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -180,6 +180,12 @@ func NewExporter(opts ...Option) *Exporter {
 	e.groupSuccessfulLocalLoads = prometheus.NewDesc(
 		prometheus.BuildFQName(e.namespace, subsystem, "successful_local_loads_total"),
 		"Count of successful loads from local cache after singleflight and excluding errors",
+		[]string{"group"},
+		e.labels,
+	)
+	e.groupLocalLoadErrs = prometheus.NewDesc(
+		prometheus.BuildFQName(e.namespace, subsystem, "local_load_errs_total"),
+		"Count of load errors from local cache",
 		[]string{"group"},
 		e.labels,
 	)

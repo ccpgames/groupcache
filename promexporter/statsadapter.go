@@ -1,7 +1,7 @@
 package promexporter
 
 import (
-	"github.com/mailgun/groupcache/v2"
+	"github.com/ccpgames/groupcache/v2"
 )
 
 // Group implements interface GroupStatistics to extract metrics from groupcache group.

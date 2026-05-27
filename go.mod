@@ -1,4 +1,4 @@
-module github.com/mailgun/groupcache/v2
+module github.com/ccpgames/groupcache/v2
 
 go 1.25.0
 

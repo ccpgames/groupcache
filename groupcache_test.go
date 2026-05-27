@@ -29,9 +29,9 @@ import (
 	"time"
 	"unsafe"
 
+	pb "github.com/ccpgames/groupcache/v2/groupcachepb"
+	"github.com/ccpgames/groupcache/v2/testpb"
 	"github.com/golang/protobuf/proto"
-	pb "github.com/mailgun/groupcache/v2/groupcachepb"
-	"github.com/mailgun/groupcache/v2/testpb"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -40,8 +40,6 @@ var (
 	stringGroup, protoGroup, expireGroup Getter
 
 	stringc = make(chan string)
-
-	dummyCtx context.Context
 
 	// cacheFills is the number of times stringGroup or
 	// protoGroup's Getter have been called. Read using the
@@ -95,7 +93,7 @@ func TestGetDupSuppressString(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		go func() {
 			var s string
-			if err := stringGroup.Get(dummyCtx, fromChan, StringSink(&s)); err != nil {
+			if err := stringGroup.Get(t.Context(), fromChan, StringSink(&s)); err != nil {
 				resc <- "ERROR:" + err.Error()
 				return
 			}
@@ -137,7 +135,7 @@ func TestGetDupSuppressProto(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		go func() {
 			tm := new(testpb.TestMessage)
-			if err := protoGroup.Get(dummyCtx, fromChan, ProtoSink(tm)); err != nil {
+			if err := protoGroup.Get(t.Context(), fromChan, ProtoSink(tm)); err != nil {
 				tm.Name = proto.String("ERROR:" + err.Error())
 			}
 			resc <- tm
@@ -181,7 +179,7 @@ func TestCaching(t *testing.T) {
 	fills := countFills(func() {
 		for i := 0; i < 10; i++ {
 			var s string
-			if err := stringGroup.Get(dummyCtx, "TestCaching-key", StringSink(&s)); err != nil {
+			if err := stringGroup.Get(t.Context(), "TestCaching-key", StringSink(&s)); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -196,7 +194,7 @@ func TestCachingExpire(t *testing.T) {
 	fills := countFills(func() {
 		for i := 0; i < 3; i++ {
 			var s string
-			if err := expireGroup.Get(dummyCtx, "TestCachingExpire-key", StringSink(&s)); err != nil {
+			if err := expireGroup.Get(t.Context(), "TestCachingExpire-key", StringSink(&s)); err != nil {
 				t.Fatal(err)
 			}
 			if i == 1 {
@@ -215,7 +213,7 @@ func TestCacheEviction(t *testing.T) {
 	getTestKey := func() {
 		var res string
 		for i := 0; i < 10; i++ {
-			if err := stringGroup.Get(dummyCtx, testKey, StringSink(&res)); err != nil {
+			if err := stringGroup.Get(t.Context(), testKey, StringSink(&res)); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -234,7 +232,7 @@ func TestCacheEviction(t *testing.T) {
 	for bytesFlooded < cacheSize+1024 {
 		var res string
 		key := fmt.Sprintf("dummy-key-%d", bytesFlooded)
-		stringGroup.Get(dummyCtx, key, StringSink(&res))
+		stringGroup.Get(t.Context(), key, StringSink(&res))
 		bytesFlooded += int64(len(key) + len(res))
 	}
 	evicts := g.mainCache.nevict - evict0
@@ -322,7 +320,7 @@ func TestPeers(t *testing.T) {
 			key := fmt.Sprintf("key-%d", i)
 			want := "got:" + key
 			var got string
-			err := testGroup.Get(dummyCtx, key, StringSink(&got))
+			err := testGroup.Get(t.Context(), key, StringSink(&got))
 			if err != nil {
 				t.Errorf("%s: error on key %q: %v", name, key, err)
 				continue
@@ -371,7 +369,7 @@ func TestPeers(t *testing.T) {
 func TestTruncatingByteSliceTarget(t *testing.T) {
 	var buf [100]byte
 	s := buf[:]
-	if err := stringGroup.Get(dummyCtx, "short", TruncatingByteSliceSink(&s)); err != nil {
+	if err := stringGroup.Get(t.Context(), "short", TruncatingByteSliceSink(&s)); err != nil {
 		t.Fatal(err)
 	}
 	if want := "ECHO:short"; string(s) != want {
@@ -379,7 +377,7 @@ func TestTruncatingByteSliceTarget(t *testing.T) {
 	}
 
 	s = buf[:6]
-	if err := stringGroup.Get(dummyCtx, "truncated", TruncatingByteSliceSink(&s)); err != nil {
+	if err := stringGroup.Get(t.Context(), "truncated", TruncatingByteSliceSink(&s)); err != nil {
 		t.Fatal(err)
 	}
 	if want := "ECHO:t"; string(s) != want {
@@ -459,7 +457,7 @@ func TestNoDedup(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		go func() {
 			var s string
-			if err := g.Get(dummyCtx, testkey, StringSink(&s)); err != nil {
+			if err := g.Get(t.Context(), testkey, StringSink(&s)); err != nil {
 				resc <- "ERROR:" + err.Error()
 				return
 			}
@@ -524,7 +522,7 @@ func TestContextDeadlineOnPeer(t *testing.T) {
 	}
 	testGroup := newGroup("TestContextDeadlineOnPeer-group", cacheSize, GetterFunc(getter), peerList)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*300)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Millisecond*300)
 	defer cancel()
 
 	var got string
