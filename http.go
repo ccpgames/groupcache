@@ -35,8 +35,11 @@ import (
 )
 
 const defaultBasePath = "/_groupcache/"
-
 const defaultReplicas = 50
+
+var (
+	errPeerClosed = errors.New("groupcache: peer is closed")
+)
 
 // HTTPPool implements PeerPicker for a pool of HTTP peers.
 type HTTPPool struct {
@@ -124,11 +127,32 @@ func (p *HTTPPool) Set(peers ...string) {
 	defer p.mu.Unlock()
 	p.peers = consistenthash.New(p.opts.Replicas, p.opts.HashFn)
 	p.peers.Add(peers...)
-	p.httpGetters = make(map[string]*httpGetter, len(peers))
+
+	// build peers set
+	peerSet := make(map[string]struct{}, len(peers))
 	for _, peer := range peers {
-		p.httpGetters[peer] = &httpGetter{
-			getTransport: p.opts.Transport,
-			baseURL:      peer + p.opts.BasePath,
+		peerSet[peer] = struct{}{}
+	}
+	for peer, v := range p.httpGetters {
+		if _, ok := peerSet[peer]; !ok {
+			// close the peers being removed to terminate all ongoing requests to them
+			v.Close()
+		}
+		delete(p.httpGetters, peer)
+	}
+
+	for _, peer := range peers {
+		if peer == p.self {
+			continue
+		}
+		if _, ok := p.httpGetters[peer]; !ok {
+			peerLifetimeCtx, peerLifetimeCancel := context.WithCancel(context.Background())
+			p.httpGetters[peer] = &httpGetter{
+				getTransport:       p.opts.Transport,
+				baseURL:            peer + p.opts.BasePath,
+				peerLifetimeCtx:    peerLifetimeCtx,
+				peerLifetimeCancel: peerLifetimeCancel,
+			}
 		}
 	}
 }
@@ -258,10 +282,17 @@ func (p *HTTPPool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 type httpGetter struct {
 	getTransport func(context.Context) http.RoundTripper
 	baseURL      string
+
+	peerLifetimeCtx    context.Context
+	peerLifetimeCancel context.CancelFunc
 }
 
 func (p *httpGetter) GetURL() string {
 	return p.baseURL
+}
+
+func (p *httpGetter) Close() {
+	p.peerLifetimeCancel()
 }
 
 var bufferPool = sync.Pool{
@@ -280,6 +311,10 @@ func (h *httpGetter) makeRequest(ctx context.Context, m string, in request, b io
 		url.PathEscape(in.GetGroup()),
 		url.PathEscape(in.GetKey()),
 	)
+	ctx, cancel := context.WithCancelCause(ctx)
+	context.AfterFunc(h.peerLifetimeCtx, func() {
+		cancel(errPeerClosed)
+	})
 	req, err := http.NewRequestWithContext(ctx, m, u, b)
 	if err != nil {
 		return err
