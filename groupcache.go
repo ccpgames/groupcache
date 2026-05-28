@@ -125,6 +125,7 @@ func DeregisterGroup(name string) {
 type groupOpts struct {
 	clampNotOwnedKeyTTL *time.Duration
 	clampHotCacheMaxTTL *time.Duration
+	disableHotCache     bool
 }
 
 // GroupOption is a function that sets an option when creating a new group.
@@ -146,13 +147,23 @@ func WithClampHotCacheMaxTTL(d time.Duration) GroupOption {
 	}
 }
 
+// WithDisableHotCache disables the hot cache.
+// This is used to prevent values in the hot cache from being cached at all.
+func WithDisableHotCache() GroupOption {
+	return func(opts *groupOpts) {
+		opts.disableHotCache = true
+	}
+}
+
 // If peers is nil, the peerPicker is called via a sync.Once to initialize it.
 func newGroup(name string, cacheBytes int64, getter Getter, peers PeerPicker, opts ...GroupOption) *Group {
 	if getter == nil {
 		panic("nil Getter")
 	}
 
-	optsStruct := groupOpts{}
+	optsStruct := groupOpts{
+		disableHotCache: false,
+	}
 	for _, opt := range opts {
 		opt(&optsStruct)
 	}
@@ -651,6 +662,9 @@ func (g *Group) lookupMainCache(key string) (value ByteView, ok bool) {
 }
 
 func (g *Group) lookupHotCache(key string) (value ByteView, ok bool) {
+	if g.opts.disableHotCache {
+		return ByteView{}, false
+	}
 	return g.lookupCache(key, &g.hotCache)
 }
 
@@ -666,6 +680,7 @@ func (g *Group) localMainCacheSet(key string, value []byte, expire time.Time) {
 	if g.cacheBytes <= 0 {
 		return
 	}
+	g.peersOnce.Do(g.initPeers)
 
 	bv := ByteView{
 		b: value,
@@ -684,6 +699,9 @@ func (g *Group) localMainCacheSet(key string, value []byte, expire time.Time) {
 }
 
 func (g *Group) localHotCacheSet(key string, value []byte, expire time.Time) {
+	if g.opts.disableHotCache {
+		return
+	}
 	if g.cacheBytes <= 0 {
 		return
 	}
@@ -718,6 +736,9 @@ func (g *Group) localRemove(key string) {
 }
 
 func (g *Group) populateHotCache(key string, value ByteView) {
+	if g.opts.disableHotCache {
+		return
+	}
 	if g.cacheBytes <= 0 {
 		return
 	}
