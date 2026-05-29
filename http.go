@@ -309,7 +309,6 @@ func (h *httpGetter) makeRequest(ctx context.Context, m string, in request, b io
 	)
 
 	ctx, cancel := context.WithCancelCause(ctx)
-	defer cancel(nil)
 	stop := context.AfterFunc(h.peerLifetimeCtx, func() {
 		cancel(&ErrRemoteCall{Msg: "peer was closed, likely removed from the peer pool"})
 	})
@@ -322,6 +321,11 @@ func (h *httpGetter) makeRequest(ctx context.Context, m string, in request, b io
 
 	req, err := http.NewRequestWithContext(ctx, m, u, b)
 	if err != nil {
+		select {
+		case <-h.peerLifetimeCtx.Done():
+			return &ErrRemoteCall{Msg: "peer was closed, likely removed from the peer pool"}
+		default:
+		}
 		return err
 	}
 
@@ -332,6 +336,11 @@ func (h *httpGetter) makeRequest(ctx context.Context, m string, in request, b io
 
 	res, err := tr.RoundTrip(req)
 	if err != nil {
+		select {
+		case <-h.peerLifetimeCtx.Done():
+			return &ErrRemoteCall{Msg: "peer was closed, likely removed from the peer pool"}
+		default:
+		}
 		return err
 	}
 	*out = *res
