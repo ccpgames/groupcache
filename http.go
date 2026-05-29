@@ -48,6 +48,7 @@ type HTTPPool struct {
 	mu          sync.RWMutex // guards peers and httpGetters
 	peers       *consistenthash.Map
 	httpGetters map[string]*httpGetter // keyed by e.g. "http://10.0.0.2:8008"
+	peersList   []string
 }
 
 // HTTPPoolOptions are the configurations of a HTTPPool.
@@ -121,6 +122,7 @@ func NewHTTPPoolOpts(self string, o *HTTPPoolOptions) *HTTPPool {
 func (p *HTTPPool) Set(peers ...string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.peersList = peers
 	p.peers = consistenthash.New(p.opts.Replicas, p.opts.HashFn)
 	p.peers.Add(peers...)
 
@@ -145,12 +147,21 @@ func (p *HTTPPool) Set(peers ...string) {
 			peerLifetimeCtx, peerLifetimeCancel := context.WithCancel(context.Background())
 			p.httpGetters[peer] = &httpGetter{
 				getTransport:       p.opts.Transport,
+				peer:               peer,
 				baseURL:            peer + p.opts.BasePath,
 				peerLifetimeCtx:    peerLifetimeCtx,
 				peerLifetimeCancel: peerLifetimeCancel,
 			}
 		}
 	}
+}
+
+// GetPeers returns the list of peers in the pool.
+func (p *HTTPPool) GetPeers() []string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	return p.peersList
 }
 
 // GetAll returns all the peers in the pool
@@ -277,6 +288,7 @@ func (p *HTTPPool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 type httpGetter struct {
 	getTransport func(context.Context) http.RoundTripper
+	peer         string
 	baseURL      string
 
 	peerLifetimeCtx    context.Context
@@ -285,6 +297,10 @@ type httpGetter struct {
 
 func (p *httpGetter) GetURL() string {
 	return p.baseURL
+}
+
+func (p *httpGetter) GetPeer() string {
+	return p.peer
 }
 
 func (p *httpGetter) Close() {
