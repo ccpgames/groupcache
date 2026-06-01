@@ -41,9 +41,9 @@ import (
 
 const (
 	remoteOperationTimeout            = 30 * time.Second
-	maxRemoteCallErrorRetryTime       = 250 * time.Millisecond
-	remoteCallErrorBackoffInitial     = time.Millisecond
-	remoteCallErrorBackoffMaxInterval = 20 * time.Millisecond
+	maxRemoteCallErrorRetryTime       = 200 * time.Millisecond
+	remoteCallErrorBackoffInitial     = 5 * time.Millisecond
+	remoteCallErrorBackoffMaxInterval = 50 * time.Millisecond
 )
 
 var logger Logger = NoopLogger{}
