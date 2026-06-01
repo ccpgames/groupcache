@@ -217,7 +217,7 @@ func (p *HTTPPool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Fetch the value for this group/key.
 	group := GetGroup(groupName)
 	if group == nil {
-		http.Error(w, "no such group: "+groupName, http.StatusNotFound)
+		http.Error(w, "no such group: "+groupName, http.StatusServiceUnavailable)
 		return
 	}
 	var ctx context.Context
