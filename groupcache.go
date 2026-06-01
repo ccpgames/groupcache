@@ -37,7 +37,6 @@ import (
 	"github.com/ccpgames/groupcache/v2/singleflight"
 	"github.com/cenkalti/backoff/v4"
 	"github.com/sirupsen/logrus"
-	"go.opentelemetry.io/otel/attribute"
 )
 
 const (
@@ -45,8 +44,6 @@ const (
 	maxRemoteCallErrorRetryTime       = 250 * time.Millisecond
 	remoteCallErrorBackoffInitial     = time.Millisecond
 	remoteCallErrorBackoffMaxInterval = 20 * time.Millisecond
-
-	otelAttributePeerURL = attribute.Key("app.groupcache.peer_url")
 )
 
 var logger Logger = NoopLogger{}
