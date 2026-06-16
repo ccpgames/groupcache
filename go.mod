@@ -1,4 +1,4 @@
-module github.com/ccpgames/groupcache/v2
+module github.com/ccpgames/groupcache/v3
 
 go 1.25.0
 
@@ -14,6 +14,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/trace v1.43.0
+	google.golang.org/protobuf v1.35.2
 )
 
 require (
@@ -27,6 +28,5 @@ require (
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	golang.org/x/sys v0.28.0 // indirect
-	google.golang.org/protobuf v1.35.2 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

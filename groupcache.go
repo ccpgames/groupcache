@@ -32,9 +32,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	pb "github.com/ccpgames/groupcache/v2/groupcachepb"
-	"github.com/ccpgames/groupcache/v2/lru"
-	"github.com/ccpgames/groupcache/v2/singleflight"
+	pb "github.com/ccpgames/groupcache/v3/groupcachepb"
+	"github.com/ccpgames/groupcache/v3/lru"
+	"github.com/ccpgames/groupcache/v3/singleflight"
 	"github.com/cenkalti/backoff/v4"
 	"github.com/sirupsen/logrus"
 )

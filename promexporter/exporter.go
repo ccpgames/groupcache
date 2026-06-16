@@ -2,7 +2,7 @@
 package promexporter
 
 import (
-	"github.com/ccpgames/groupcache/v2"
+	"github.com/ccpgames/groupcache/v3"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

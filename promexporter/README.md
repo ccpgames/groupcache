@@ -6,8 +6,8 @@ This exporter extracts statistics from group instances and exports as Prometheus
 
 ```go
 import (
-	"github.com/ccpgames/groupcache/v2"
-	"github.com/ccpgames/groupcache/v2/promexporter"
+	"github.com/ccpgames/groupcache/v3"
+	"github.com/ccpgames/groupcache/v3/promexporter"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

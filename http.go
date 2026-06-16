@@ -29,8 +29,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ccpgames/groupcache/v2/consistenthash"
-	pb "github.com/ccpgames/groupcache/v2/groupcachepb"
+	"github.com/ccpgames/groupcache/v3/consistenthash"
+	pb "github.com/ccpgames/groupcache/v3/groupcachepb"
 	"github.com/golang/protobuf/proto"
 )
 

@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/ccpgames/groupcache/v2"
+	"github.com/ccpgames/groupcache/v3"
 )
 
 func ExampleGroup() {

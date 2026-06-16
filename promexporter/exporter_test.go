@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ccpgames/groupcache/v2"
-	"github.com/ccpgames/groupcache/v2/promexporter"
+	"github.com/ccpgames/groupcache/v3"
+	"github.com/ccpgames/groupcache/v3/promexporter"
 	"github.com/mailgun/holster/v4/retry"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
