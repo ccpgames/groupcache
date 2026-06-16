@@ -382,7 +382,7 @@ func (h *httpGetter) makeRequest(ctx context.Context, m string, in request, b io
 func (h *httpGetter) Get(ctx context.Context, in *pb.GetRequest, out *pb.GetResponse) (err error) {
 	var res http.Response
 	if err := h.makeRequest(ctx, http.MethodGet, in, nil, &res); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", &ErrRemoteCall{}, err)
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
