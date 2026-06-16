@@ -274,7 +274,7 @@ func (p *HTTPPool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		default:
-			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
