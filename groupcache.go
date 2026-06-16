@@ -669,7 +669,12 @@ func (g *Group) getFromPeer(ctx context.Context, peer ProtoGetter, key string) (
 		}
 	}
 
-	value := ByteView{b: res.Value, e: expire}
+	var doNotCache bool
+	if res.DoNotCache != nil {
+		doNotCache = *res.DoNotCache
+	}
+
+	value := ByteView{b: res.Value, e: expire, doNotCache: doNotCache}
 
 	return value, nil
 }
@@ -796,6 +801,9 @@ func (g *Group) localRemove(key string) {
 }
 
 func (g *Group) populateHotCache(key string, value ByteView) {
+	if value.doNotCache {
+		return
+	}
 	if g.opts.disableHotCache {
 		return
 	}
@@ -816,6 +824,9 @@ func (g *Group) populateHotCache(key string, value ByteView) {
 }
 
 func (g *Group) populateMainCache(key string, value ByteView) {
+	if value.doNotCache {
+		return
+	}
 	if g.cacheBytes <= 0 {
 		return
 	}

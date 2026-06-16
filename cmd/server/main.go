@@ -24,7 +24,7 @@ var group = groupcache.NewGroup("cache1", 64<<20, groupcache.GetterFunc(
 		if !ok {
 			return fmt.Errorf("key not set")
 		} else {
-			if err := dest.SetBytes([]byte(v), time.Now().Add(10*time.Minute)); err != nil {
+			if err := dest.SetBytes([]byte(v), time.Now().Add(10*time.Minute), false); err != nil {
 				log.Printf("Failed to set cache value for key '%s' - %v\n", key, err)
 				return err
 			}

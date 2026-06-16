@@ -272,7 +272,7 @@ func TestExporterWithGroups(t *testing.T) {
 // Create new test group.
 func newGroup(t *testing.T, name string) *groupcache.Group {
 	getter := func(_ context.Context, key string, dest groupcache.Sink) error {
-		err := dest.SetString("foobar", time.Now().Add(ttl))
+		err := dest.SetString("foobar", time.Now().Add(ttl), false)
 		require.NoError(t, err)
 		return nil
 	}

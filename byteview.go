@@ -32,14 +32,20 @@ import (
 // a pointer (like a time.Time).
 type ByteView struct {
 	// If b is non-nil, b is used, else s is used.
-	b []byte
-	s string
-	e time.Time
+	b          []byte
+	s          string
+	e          time.Time
+	doNotCache bool
 }
 
 // Returns the expire time associated with this view
 func (v ByteView) Expire() time.Time {
 	return v.e
+}
+
+// DoNotCache returns whether this view should not be cached.
+func (v ByteView) DoNotCache() bool {
+	return v.doNotCache
 }
 
 // Len returns the view's length.
