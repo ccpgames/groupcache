@@ -29,8 +29,8 @@ import (
 	"time"
 	"unsafe"
 
-	pb "github.com/ccpgames/groupcache/v2/groupcachepb"
-	"github.com/ccpgames/groupcache/v2/testpb"
+	pb "github.com/ccpgames/groupcache/v3/groupcachepb"
+	"github.com/ccpgames/groupcache/v3/testpb"
 	"github.com/golang/protobuf/proto"
 	"github.com/stretchr/testify/assert"
 )

@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ccpgames/groupcache/v2"
+	"github.com/ccpgames/groupcache/v3"
 )
 
 var store = map[string]string{}

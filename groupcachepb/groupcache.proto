@@ -18,7 +18,7 @@ syntax = "proto2";
 
 package groupcachepb;
 
-option go_package = "github.com/ccpgames/groupcache/v2/groupcachepb";
+option go_package = "github.com/ccpgames/groupcache/v3/groupcachepb";
 
 message GetRequest {
   required string group = 1;
