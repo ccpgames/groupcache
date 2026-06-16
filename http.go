@@ -269,12 +269,14 @@ func (p *HTTPPool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	err := group.getForRemote(ctx, key, value)
 	if err != nil {
-		if errors.Is(err, &ErrNotFound{}) {
+		switch {
+		case errors.Is(err, &ErrNotFound{}):
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
+		default:
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			return
 		}
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
-		return
 	}
 
 	view, err := value.view()
@@ -287,12 +289,15 @@ func (p *HTTPPool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		expireNano = view.Expire().UnixNano()
 	}
 
+	doNotCache := view.DoNotCache()
+
 	// Write the value to the response body as a proto message.
-	body, err := proto.Marshal(&pb.GetResponse{Value: b, Expire: &expireNano})
+	body, err := proto.Marshal(&pb.GetResponse{Value: b, Expire: &expireNano, DoNotCache: &doNotCache})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
 	w.Header().Set("Content-Type", "application/x-protobuf")
 	w.Write(body)
 }
@@ -374,7 +379,7 @@ func (h *httpGetter) makeRequest(ctx context.Context, m string, in request, b io
 	return nil
 }
 
-func (h *httpGetter) Get(ctx context.Context, in *pb.GetRequest, out *pb.GetResponse) error {
+func (h *httpGetter) Get(ctx context.Context, in *pb.GetRequest, out *pb.GetResponse) (err error) {
 	var res http.Response
 	if err := h.makeRequest(ctx, http.MethodGet, in, nil, &res); err != nil {
 		return err
@@ -397,7 +402,7 @@ func (h *httpGetter) Get(ctx context.Context, in *pb.GetRequest, out *pb.GetResp
 	b := bufferPool.Get().(*bytes.Buffer)
 	b.Reset()
 	defer bufferPool.Put(b)
-	_, err := io.Copy(b, res.Body)
+	_, err = io.Copy(b, res.Body)
 	if err != nil {
 		return fmt.Errorf("reading response body: %v", err)
 	}
@@ -405,6 +410,7 @@ func (h *httpGetter) Get(ctx context.Context, in *pb.GetRequest, out *pb.GetResp
 	if err != nil {
 		return fmt.Errorf("decoding response body: %v", err)
 	}
+
 	return nil
 }
 

@@ -26,7 +26,7 @@ import (
 
 // ProtoGetter is the interface that must be implemented by a peer.
 type ProtoGetter interface {
-	Get(context context.Context, in *pb.GetRequest, out *pb.GetResponse) error
+	Get(context context.Context, in *pb.GetRequest, out *pb.GetResponse) (err error)
 	Remove(context context.Context, in *pb.GetRequest) error
 	Set(context context.Context, in *pb.SetRequest) error
 	// GetURL returns the peer URL

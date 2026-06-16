@@ -62,7 +62,7 @@ func testSetup() {
 			key = <-stringc
 		}
 		cacheFills.Add(1)
-		return dest.SetString("ECHO:"+key, time.Time{})
+		return dest.SetString("ECHO:"+key, time.Time{}, false)
 	}))
 
 	protoGroup = NewGroup(protoGroupName, cacheSize, GetterFunc(func(_ context.Context, key string, dest Sink) error {
@@ -73,12 +73,12 @@ func testSetup() {
 		return dest.SetProto(&testpb.TestMessage{
 			Name: proto.String("ECHO:" + key),
 			City: proto.String("SOME-CITY"),
-		}, time.Time{})
+		}, time.Time{}, false)
 	}))
 
 	expireGroup = NewGroup(expireGroupName, cacheSize, GetterFunc(func(_ context.Context, key string, dest Sink) error {
 		cacheFills.Add(1)
-		return dest.SetString("ECHO:"+key, time.Now().Add(time.Millisecond*100))
+		return dest.SetString("ECHO:"+key, time.Now().Add(time.Millisecond*100), false)
 	}))
 }
 
@@ -306,7 +306,7 @@ func TestPeers(t *testing.T) {
 	localHits := 0
 	getter := func(_ context.Context, key string, dest Sink) error {
 		localHits++
-		return dest.SetString("got:"+key, time.Time{})
+		return dest.SetString("got:"+key, time.Time{}, false)
 	}
 	testGroup := newGroup("TestPeers-group", cacheSize, GetterFunc(getter), peerList)
 	run := func(name string, n int, wantSummary string) {
@@ -390,7 +390,7 @@ func TestAllocatingByteSliceTarget(t *testing.T) {
 	sink := AllocatingByteSliceSink(&dst)
 
 	inBytes := []byte("some bytes")
-	sink.SetBytes(inBytes, time.Time{})
+	sink.SetBytes(inBytes, time.Time{}, false)
 	if want := "some bytes"; string(dst) != want {
 		t.Errorf("SetBytes resulted in %q; want %q", dst, want)
 	}
@@ -437,7 +437,7 @@ func TestNoDedup(t *testing.T) {
 	const testkey = "testkey"
 	const testval = "testval"
 	g := newGroup("testgroup", 1024, GetterFunc(func(_ context.Context, key string, dest Sink) error {
-		return dest.SetString(testval, time.Time{})
+		return dest.SetString(testval, time.Time{}, false)
 	}), nil)
 
 	orderedGroup := &orderedFlightGroup{
@@ -518,7 +518,7 @@ func TestContextDeadlineOnPeer(t *testing.T) {
 	peer2 := &slowPeer{}
 	peerList := fakePeers([]ProtoGetter{peer0, peer1, peer2, nil})
 	getter := func(_ context.Context, key string, dest Sink) error {
-		return dest.SetString("got:"+key, time.Time{})
+		return dest.SetString("got:"+key, time.Time{}, false)
 	}
 	testGroup := newGroup("TestContextDeadlineOnPeer-group", cacheSize, GetterFunc(getter), peerList)
 
@@ -581,6 +581,112 @@ func TestEnsureSizeReportedCorrectly(t *testing.T) {
 	assert.True(t, ok)
 	assert.True(t, v.Equal(bv4))
 	assert.Equal(t, int64(37), c.bytes())
+}
+
+// TestDoNotCache verifies the do not cache mechanism: when a getter returns a value with the doNotCache flag set, the value is still returned to the caller
+// but it is never stored to cache, so every Get re-invokes the getter.
+func TestDoNotCache(t *testing.T) {
+	const testKey = "TestDoNotCache-key"
+	const wantValue = "ECHO:" + testKey
+
+	var fills int
+	g := newGroup("TestDoNotCache-group", cacheSize, GetterFunc(func(_ context.Context, key string, dest Sink) error {
+		fills++
+		if err := dest.SetString("ECHO:"+key, time.Time{}, true); err != nil {
+			return err
+		}
+		return nil
+	}), nil)
+
+	// Every Get should populate the sink with the value and must not surface.
+	const calls = 3
+	for i := 0; i < calls; i++ {
+		var got string
+		if err := g.Get(t.Context(), testKey, StringSink(&got)); err != nil {
+			t.Fatalf("Get #%d returned unexpected error: %v", i+1, err)
+		}
+		if got != wantValue {
+			t.Errorf("Get #%d: got %q; want %q", i+1, got, wantValue)
+		}
+	}
+
+	// Because the value is never cached, the getter must run on every call.
+	if fills != calls {
+		t.Errorf("getter called %d times; want %d (value must not be cached)", fills, calls)
+	}
+
+	// Neither cache should hold the value.
+	if n := g.mainCache.items(); n != 0 {
+		t.Errorf("mainCache has %d items; want 0", n)
+	}
+	if n := g.hotCache.items(); n != 0 {
+		t.Errorf("hotCache has %d items; want 0", n)
+	}
+}
+
+// remoteDoNotCachePeer simulates a remote owner peer that serves a value but
+// signals that it must not be cached (mirrors the Cache-Control: no-store path
+// in the HTTP transport, which the client decodes back into *ErrDoNotCache).
+type remoteDoNotCachePeer struct {
+	fakePeer
+}
+
+func (p *remoteDoNotCachePeer) Get(_ context.Context, in *pb.GetRequest, out *pb.GetResponse) error {
+	p.hits++
+	out.Value = []byte("peer:" + in.GetKey())
+	doNotCache := true
+	out.DoNotCache = &doNotCache
+	return nil
+}
+
+// TestRemoteDoNotCache verifies the do not cache mechanism across the peer
+// boundary: when the remote owner of a key returns a value with the doNotCache flag set, the
+// peer's value is passed through to the caller without surfacing the error, it
+// is never cached, and every Get re-queries the owner peer rather than falling
+// back to the local getter.
+func TestRemoteDoNotCache(t *testing.T) {
+	const key = "TestRemoteDoNotCache-key"
+	const wantValue = "peer:" + key
+
+	peer := &remoteDoNotCachePeer{}
+	peerList := fakePeers([]ProtoGetter{peer})
+
+	var localHits int
+	getter := func(_ context.Context, key string, dest Sink) error {
+		localHits++
+		return dest.SetString("local:"+key, time.Time{}, true)
+	}
+	g := newGroup("TestRemoteDoNotCache-group", cacheSize, GetterFunc(getter), peerList)
+
+	const calls = 3
+	for i := 0; i < calls; i++ {
+		var got string
+		if err := g.Get(t.Context(), key, StringSink(&got)); err != nil {
+			t.Fatalf("Get #%d returned unexpected error: %v", i+1, err)
+		}
+		// The value must come from the owner peer, not the local fallback getter.
+		if got != wantValue {
+			t.Errorf("Get #%d: got %q; want %q", i+1, got, wantValue)
+		}
+	}
+
+	// Because the value is never cached, the owner peer is queried on every Get.
+	if peer.hits != calls {
+		t.Errorf("peer queried %d times; want %d (value must not be cached)", peer.hits, calls)
+	}
+
+	// A DoNotCache response from the owner peer must not trigger the local getter.
+	if localHits != 0 {
+		t.Errorf("local getter called %d times; want 0", localHits)
+	}
+
+	// Neither cache should hold the value.
+	if n := g.mainCache.items(); n != 0 {
+		t.Errorf("mainCache has %d items; want 0", n)
+	}
+	if n := g.hotCache.items(); n != 0 {
+		t.Errorf("hotCache has %d items; want 0", n)
+	}
 }
 
 func TestEnsureUpdateExpiredValue(t *testing.T) {

@@ -216,6 +216,23 @@ func TestHTTPPool(t *testing.T) {
 	err = g.Get(ctx, "IReturnInternalError", StringSink(&value))
 	assert.Equal(t, "I am a errors.New() error", err.Error())
 
+	// Get a key that is guaranteed to return a do-not-cache error
+	err = g.Get(ctx, "IReturnDoNotCache", StringSink(&value))
+	if err != nil {
+		t.Fatalf("do not cache is not supposed to return an error, got '%v'", err)
+	}
+	if !strings.Contains(value, "IReturnDoNotCache") {
+		t.Fatalf("unexpected value returned for do-not-cache key, got '%s'", value)
+	}
+	var value2 string
+	err = g.Get(ctx, "IReturnDoNotCache", StringSink(&value2))
+	if err != nil {
+		t.Fatalf("do not cache is not supposed to return an error, got '%v'", err)
+	}
+	if value2 == value {
+		t.Fatalf("expected a different value for the second do-not-cache get, got '%s'", value2)
+	}
+
 	testHTTPPoolSet(t, p, self)
 }
 
@@ -250,7 +267,19 @@ func beChildForTestHTTPPool(t *testing.T) {
 			t.Logf("HTTP request from getter failed with '%s'", err)
 		}
 
-		dest.SetString(strconv.Itoa(*peerIndex)+":"+key, time.Time{})
+		var doNotCache bool
+		rsp := strconv.Itoa(*peerIndex) + ":" + key
+
+		if key == "IReturnDoNotCache" {
+			// Serve the value but tell the caller not to cache it.
+			rsp = rsp + "@" + time.Now().String()
+			doNotCache = true
+		}
+		err := dest.SetString(rsp, time.Time{}, doNotCache)
+		if err != nil {
+			return err
+		}
+
 		return nil
 	})
 	NewGroup("httpPoolTest", 1<<20, getter)
@@ -472,7 +501,7 @@ func TestHttpGetterClosed(t *testing.T) {
 
 	// let's create a group with a dummy getter
 	group := NewGroup("httpGetterTest", 1<<20, GetterFunc(func(ctx context.Context, key string, dest Sink) error {
-		return dest.SetString(key, time.Now().Add(time.Second))
+		return dest.SetString(key, time.Now().Add(time.Second), false)
 	}))
 
 	// let's attempt to get in a go routine
