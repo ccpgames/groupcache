@@ -9,6 +9,9 @@ type ErrNotFound struct {
 }
 
 func (e *ErrNotFound) Error() string {
+	if e.Msg == "" {
+		return "not found error"
+	}
 	return e.Msg
 }
 
@@ -25,6 +28,9 @@ type ErrRemoteCall struct {
 }
 
 func (e *ErrRemoteCall) Error() string {
+	if e.Msg == "" {
+		return "remote call error"
+	}
 	return e.Msg
 }
 
