@@ -548,13 +548,13 @@ func (g *Group) loadFromRemoteIfRemoteOwner(ctx context.Context, key string) (lo
 		if g.Stats.GetFromPeersLatencyLower.Get() < duration {
 			g.Stats.GetFromPeersLatencyLower.Store(duration)
 		}
-		if err == nil {
-			// populate hot cache with the value retrieved from peer
-			g.populateHotCache(key, value)
-			g.Stats.PeerLoads.Add(1)
-			return nil
+		if err != nil {
+			return err
 		}
-		return err
+		// populate hot cache with the value retrieved from peer
+		g.populateHotCache(key, value)
+		g.Stats.PeerLoads.Add(1)
+		return nil
 	})
 	return loaded, value, err
 }
