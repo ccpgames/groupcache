@@ -635,6 +635,15 @@ func (g *Group) callRemoteIfRemoteOwner(ctx context.Context, key string, fn func
 				}).Printf("error calling peer '%s'", owner.GetURL())
 				return err
 			}
+			if errors.Is(err, &ErrPeerGone{}) {
+				logger.Info().WithFields(map[string]interface{}{
+					"err":      err,
+					"key":      key,
+					"category": "groupcache",
+				}).Printf("peer shutting down '%s'", owner.GetURL())
+				return backoff.Permanent(err) // We will never get an answer from this peer.
+			}
+
 			logger.Error().WithFields(map[string]interface{}{
 				"err":      err,
 				"key":      key,

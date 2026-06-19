@@ -38,3 +38,21 @@ func (e *ErrRemoteCall) Is(target error) bool {
 	_, ok := target.(*ErrRemoteCall)
 	return ok
 }
+
+// ErrPeerGone is returned when the peer we are trying to talk to is shutting down and is currently draining its queue.
+// When receiving this error it doesn't make sense to retry as the peer will never respond with the actual answer.
+type ErrPeerGone struct {
+	Msg string
+}
+
+func (e *ErrPeerGone) Error() string {
+	if e.Msg == "" {
+		return "peer gone error"
+	}
+	return e.Msg
+}
+
+func (e *ErrPeerGone) Is(target error) bool {
+	_, ok := target.(*ErrPeerGone)
+	return ok
+}
