@@ -394,7 +394,7 @@ func (h *httpGetter) Get(ctx context.Context, in *pb.GetRequest, out *pb.GetResp
 		}
 
 		if res.StatusCode == http.StatusServiceUnavailable {
-			return &ErrRemoteCall{Msg: strings.Trim(string(msg), "\n")}
+			return &ErrNoSuchGroup{Msg: strings.Trim(string(msg), "\n")}
 		}
 
 		if res.StatusCode == http.StatusGone {

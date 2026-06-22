@@ -643,6 +643,16 @@ func (g *Group) callRemoteIfRemoteOwner(ctx context.Context, key string, fn func
 				}).Printf("peer shutting down '%s'", owner.GetURL())
 				return backoff.Permanent(err) // We will never get an answer from this peer.
 			}
+			if errors.Is(err, &ErrNoSuchGroup{}) {
+				logger.Info().WithFields(map[string]interface{}{
+					"err":      err,
+					"key":      key,
+					"category": "groupcache",
+				}).Printf("peer doesn't have group registered '%s'", owner.GetURL())
+				// Most likely happens because we are in the middle of a deployment, and the group name has changed,
+				// or it was configured wrong. Either way we will never get an answer from this peer.
+				return backoff.Permanent(err)
+			}
 
 			logger.Error().WithFields(map[string]interface{}{
 				"err":      err,

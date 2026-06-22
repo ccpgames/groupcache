@@ -56,3 +56,20 @@ func (e *ErrPeerGone) Is(target error) bool {
 	_, ok := target.(*ErrPeerGone)
 	return ok
 }
+
+// ErrNoSuchGroup is returned when the peer we are talking to does not have the group we are asking for.
+type ErrNoSuchGroup struct {
+	Msg string
+}
+
+func (e *ErrNoSuchGroup) Error() string {
+	if e.Msg == "" {
+		return "no such group"
+	}
+	return e.Msg
+}
+
+func (e *ErrNoSuchGroup) Is(target error) bool {
+	_, ok := target.(*ErrNoSuchGroup)
+	return ok
+}
