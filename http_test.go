@@ -46,6 +46,13 @@ var (
 )
 
 func TestHTTPPool(t *testing.T) {
+	oldPortPicker := portPicker
+	t.Cleanup(
+		func() {
+			portPicker = oldPortPicker
+		},
+	)
+	portPicker = nil
 	if *peerChild {
 		beChildForTestHTTPPool(t)
 		os.Exit(0)
