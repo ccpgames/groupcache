@@ -14,7 +14,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/trace v1.43.0
-	google.golang.org/protobuf v1.35.2
+	google.golang.org/protobuf v1.36.12
 )
 
 require (
@@ -27,6 +27,6 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
-	golang.org/x/sys v0.28.0 // indirect
+	golang.org/x/sys v0.43.1-0.20260408233230-690c91f6ecf3 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
