@@ -23,7 +23,6 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
-	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -31,8 +30,9 @@ import (
 
 	pb "github.com/ccpgames/groupcache/v3/groupcachepb"
 	"github.com/ccpgames/groupcache/v3/testpb"
-	"github.com/golang/protobuf/proto"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/protobuf/encoding/prototext"
+	"google.golang.org/protobuf/proto"
 )
 
 var (
@@ -159,8 +159,8 @@ func TestGetDupSuppressProto(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		select {
 		case v := <-resc:
-			if !reflect.DeepEqual(v, want) {
-				t.Errorf(" Got: %v\nWant: %v", proto.CompactTextString(v), proto.CompactTextString(want))
+			if !proto.Equal(v, want) {
+				t.Errorf(" Got: %s\nWant: %s", prototext.Format(v), prototext.Format(want))
 			}
 		case <-time.After(5 * time.Second):
 			t.Errorf("timeout waiting on getter #%d of 2", i+1)

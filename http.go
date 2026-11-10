@@ -31,7 +31,7 @@ import (
 
 	"github.com/ccpgames/groupcache/v3/consistenthash"
 	pb "github.com/ccpgames/groupcache/v3/groupcachepb"
-	"github.com/golang/protobuf/proto"
+	"google.golang.org/protobuf/proto"
 )
 
 const defaultBasePath = "/_groupcache/"
